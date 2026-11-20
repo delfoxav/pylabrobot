@@ -23,3 +23,4 @@ from .errors import (
 from .results import AbsorbanceResult, FluorescenceResult, LuminescenceResult
 from .spectramax_384_plus import SpectraMax384Plus
 from .spectramax_m5 import SpectraMaxM5
+from .spectramax_340 import SpectraMax340
