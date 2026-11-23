@@ -172,6 +172,9 @@ class MolecularDevicesPlateReader:
   (open/close tray, status, error log, shake).
   """
 
+  # Firmware error code -> (message, exception class). Models with a different table override it.
+  error_codes = ERROR_CODES
+
   def __init__(
     self, port: str, human_readable_device_name: str = "Molecular Devices Plate Reader"
   ) -> None:
@@ -234,12 +237,17 @@ class MolecularDevicesPlateReader:
       try:
         error_code_str = parts[-1]
         error_code = int(error_code_str.strip())
-        if error_code in ERROR_CODES:
-          message, err_class = ERROR_CODES[error_code]
-          raise err_class(f"Command '{command}' failed with error {error_code}: {message}")
-        raise SpectraMaxError(f"Command '{command}' failed with unknown error code: {error_code}")
       except (ValueError, IndexError):
         raise SpectraMaxError(f"Command '{command}' failed with unparsable error: {response[0]}")
+      if error_code in self.error_codes:
+        message, err_class = self.error_codes[error_code]
+        err: SpectraMaxError = err_class(
+          f"Command '{command}' failed with error {error_code}: {message}"
+        )
+      else:
+        err = SpectraMaxError(f"Command '{command}' failed with unknown error code: {error_code}")
+      err.code = error_code  # type: ignore[attr-defined]  # numeric firmware error code
+      raise err
 
     if not any("OK" in r for r in response):
       raise SpectraMaxError(f"Command '{command}' failed with response: {response}")
@@ -327,6 +335,21 @@ class MolecularDevicesPlateReader:
     data_str = res[1]
     return self._parse_data(data_str, settings)
 
+  @staticmethod
+  def _parse_value(token: str) -> float:
+    """Parse one value of a !TRANSFER data row.
+
+    The firmware prints values without a leading zero (``.028``, ``-.005``). ``#SAT`` marks a
+    saturated well (returned as ``inf``); anything else that is not a number becomes ``nan``.
+    """
+    token = token.strip()
+    if token == "#SAT":
+      return float("inf")
+    try:
+      return float(token)
+    except ValueError:
+      return float("nan")
+
   def _parse_data(self, data_str: str, settings: MolecularDevicesSettings) -> List[Dict]:
     lines = re.split(r"\r\n|\n", data_str.strip())
     lines = [line.strip() for line in lines if line.strip()]
@@ -355,15 +378,7 @@ class MolecularDevicesPlateReader:
       match = re.match(r"^\s*(\d+):\s*(.*)", line)
       if match:
         values_str = re.split(r"\s+", match.group(2).strip())
-        values = []
-        for v in values_str:
-          if v.strip().replace(".", "", 1).isdigit():
-            values.append(float(v.strip()))
-          elif v.strip() == "#SAT":
-            values.append(float("inf"))
-          else:
-            values.append(float("nan"))
-        data_columns.append(values)
+        data_columns.append([self._parse_value(v) for v in values_str])
     if data_columns:
       data_collection.append(data_columns)
 
